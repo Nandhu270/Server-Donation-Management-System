@@ -7,8 +7,10 @@ const connectDB = require("./config/db");
 
 dotenv.config();
 
-// Initialize DB connection
-connectDB();
+// Initialize DB connection & run seeder
+connectDB().then(() => {
+  seedDatabase();
+});
 
 const PORT = process.env.PORT || 5174;
 
@@ -21,8 +23,10 @@ const contact = require("./models/contact");
 const authRoutes = require("./routes/authRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const donorRoutes = require("./routes/donorRoutes");
+const contentRoutes = require("./routes/contentRoutes");
 const authController = require("./controllers/authController");
 const donorController = require("./controllers/donorController");
+const seedDatabase = require("./config/seedData");
 
 const app = express();
 
@@ -50,6 +54,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/donors", donorRoutes);
+app.use("/api", contentRoutes);
 
 // --- Backward-Compatible Routes (Upgraded with Security) ---
 

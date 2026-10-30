@@ -1,6 +1,11 @@
 const User = require("../models/User");
 const Donate = require("../models/donate");
 const Contact = require("../models/contact");
+const EmergencyRequest = require("../models/EmergencyRequest");
+const Campaign = require("../models/Campaign");
+const Article = require("../models/Article");
+const Faq = require("../models/Faq");
+const Testimonial = require("../models/Testimonial");
 
 /**
  * Get all users with search, role filter, and pagination
@@ -78,7 +83,6 @@ const updateUserRole = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found." });
     }
 
-    // Edge Case: Prevent the last remaining admin from demoting themselves!
     if (targetUser._id.equals(req.userId) && targetUser.role === "admin" && role !== "admin") {
       const adminCount = await User.countDocuments({ role: "admin", isActive: true });
       if (adminCount <= 1) {
@@ -119,7 +123,6 @@ const toggleUserStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found." });
     }
 
-    // Edge Case: Admin cannot deactivate their own account
     if (targetUser._id.equals(req.userId)) {
       return res.status(400).json({
         success: false,
@@ -157,6 +160,9 @@ const getAdminDashboardStats = async (req, res) => {
       activeUsers,
       donations,
       contactCount,
+      emergencyCount,
+      campaignCount,
+      articleCount,
     ] = await Promise.all([
       User.countDocuments(),
       User.countDocuments({ role: "admin" }),
@@ -164,6 +170,9 @@ const getAdminDashboardStats = async (req, res) => {
       User.countDocuments({ isActive: true }),
       Donate.find(),
       Contact.countDocuments(),
+      EmergencyRequest.countDocuments(),
+      Campaign.countDocuments(),
+      Article.countDocuments(),
     ]);
 
     const totalDonationAmount = donations.reduce(
@@ -171,7 +180,6 @@ const getAdminDashboardStats = async (req, res) => {
       0
     );
 
-    // Group blood types for chart / inventory overview
     const bloodCounts = await User.aggregate([
       { $match: { isActive: true } },
       { $group: { _id: "$blood", count: { $sum: 1 } } },
@@ -188,6 +196,9 @@ const getAdminDashboardStats = async (req, res) => {
         totalDonationRecords: donations.length,
         totalDonationAmount,
         contactInquiries: contactCount,
+        emergencyRequests: emergencyCount,
+        campaignsCount: campaignCount,
+        articlesCount: articleCount,
         bloodInventorySummary: bloodCounts,
       },
     });
@@ -201,10 +212,320 @@ const getAdminDashboardStats = async (req, res) => {
   }
 };
 
+// ==========================================
+// EMERGENCY BLOOD REQUESTS MANAGEMENT
+// ==========================================
+
+const getAllEmergencyRequestsAdmin = async (req, res) => {
+  try {
+    const requests = await EmergencyRequest.find().sort({ createdAt: -1 });
+    return res.status(200).json({ success: true, count: requests.length, requests });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const createEmergencyRequest = async (req, res) => {
+  try {
+    const { hospital, location, blood, patient, urgency, unitsRequired, contactPhone } = req.body;
+    if (!hospital || !location || !blood || !patient) {
+      return res.status(400).json({ success: false, message: "Hospital, location, blood, and patient are required." });
+    }
+
+    const newRequest = await EmergencyRequest.create({
+      hospital,
+      location,
+      blood,
+      patient,
+      urgency: urgency || "Immediate",
+      unitsRequired: Number(unitsRequired) || 1,
+      contactPhone: contactPhone || "+91 985-452-964",
+      isActive: true,
+    });
+
+    return res.status(201).json({ success: true, message: "Emergency request created.", request: newRequest });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateEmergencyRequest = async (req, res) => {
+  try {
+    const updated = await EmergencyRequest.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!updated) return res.status(404).json({ success: false, message: "Request not found." });
+    return res.status(200).json({ success: true, message: "Emergency request updated.", request: updated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const toggleEmergencyRequest = async (req, res) => {
+  try {
+    const reqDoc = await EmergencyRequest.findById(req.params.id);
+    if (!reqDoc) return res.status(404).json({ success: false, message: "Request not found." });
+    reqDoc.isActive = !reqDoc.isActive;
+    await reqDoc.save();
+    return res.status(200).json({ success: true, message: "Status updated.", isActive: reqDoc.isActive });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteEmergencyRequest = async (req, res) => {
+  try {
+    await EmergencyRequest.findByIdAndDelete(req.params.id);
+    return res.status(200).json({ success: true, message: "Emergency request deleted." });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// CAMPAIGNS / CAUSES MANAGEMENT
+// ==========================================
+
+const getAllCampaignsAdmin = async (req, res) => {
+  try {
+    const campaigns = await Campaign.find().sort({ createdAt: -1 });
+    return res.status(200).json({ success: true, count: campaigns.length, campaigns });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const createCampaign = async (req, res) => {
+  try {
+    const { title, focus, image, goal, raised, beneficiaries, desc } = req.body;
+    if (!title || !focus || !goal || !desc) {
+      return res.status(400).json({ success: false, message: "Title, focus, goal, and description are required." });
+    }
+
+    const campaign = await Campaign.create({
+      title,
+      focus,
+      image: image || "https://images.unsplash.com/photo-1579684385127-1ef15d508118?q=80&w=800&auto=format&fit=crop",
+      goal: Number(goal),
+      raised: Number(raised) || 0,
+      beneficiaries: beneficiaries || "",
+      desc,
+      isActive: true,
+    });
+
+    return res.status(201).json({ success: true, message: "Campaign created successfully.", campaign });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateCampaign = async (req, res) => {
+  try {
+    const updated = await Campaign.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!updated) return res.status(404).json({ success: false, message: "Campaign not found." });
+    return res.status(200).json({ success: true, message: "Campaign updated.", campaign: updated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteCampaign = async (req, res) => {
+  try {
+    await Campaign.findByIdAndDelete(req.params.id);
+    return res.status(200).json({ success: true, message: "Campaign deleted." });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// ARTICLES MANAGEMENT
+// ==========================================
+
+const getAllArticlesAdmin = async (req, res) => {
+  try {
+    const articles = await Article.find().sort({ createdAt: -1 });
+    return res.status(200).json({ success: true, count: articles.length, articles });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const createArticle = async (req, res) => {
+  try {
+    const { title, category, readTime, date, image, excerpt, content, link } = req.body;
+    if (!title || !category || !excerpt) {
+      return res.status(400).json({ success: false, message: "Title, category, and excerpt are required." });
+    }
+
+    const article = await Article.create({
+      title,
+      category,
+      readTime: readTime || "4 min read",
+      date: date || new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      image: image || "https://images.unsplash.com/photo-1516549655169-df83a0774514?q=80&w=800&auto=format&fit=crop",
+      excerpt,
+      content: content || "",
+      link: link || "/blog/blood",
+      isPublished: true,
+    });
+
+    return res.status(201).json({ success: true, message: "Article created.", article });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateArticle = async (req, res) => {
+  try {
+    const updated = await Article.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!updated) return res.status(404).json({ success: false, message: "Article not found." });
+    return res.status(200).json({ success: true, message: "Article updated.", article: updated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteArticle = async (req, res) => {
+  try {
+    await Article.findByIdAndDelete(req.params.id);
+    return res.status(200).json({ success: true, message: "Article deleted." });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// INQUIRIES & HELPLINE MANAGEMENT
+// ==========================================
+
+const getAllInquiries = async (req, res) => {
+  try {
+    const inquiries = await Contact.find().sort({ createdAt: -1 });
+    return res.status(200).json({ success: true, count: inquiries.length, inquiries });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteInquiry = async (req, res) => {
+  try {
+    await Contact.findByIdAndDelete(req.params.id);
+    return res.status(200).json({ success: true, message: "Inquiry removed." });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// DONATION TRANSACTIONS LEDGER
+// ==========================================
+
+const getAllDonationsAdmin = async (req, res) => {
+  try {
+    const donations = await Donate.find().sort({ createdAt: -1 });
+    return res.status(200).json({ success: true, count: donations.length, donations });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteDonationAdmin = async (req, res) => {
+  try {
+    await Donate.findByIdAndDelete(req.params.id);
+    return res.status(200).json({ success: true, message: "Donation record deleted." });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// FAQS MANAGEMENT
+// ==========================================
+
+const getAllFaqsAdmin = async (req, res) => {
+  try {
+    const faqs = await Faq.find().sort({ order: 1, createdAt: 1 });
+    return res.status(200).json({ success: true, count: faqs.length, faqs });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const createFaq = async (req, res) => {
+  try {
+    const { question, answer, category, order } = req.body;
+    if (!question || !answer) {
+      return res.status(400).json({ success: false, message: "Question and answer are required." });
+    }
+
+    const faq = await Faq.create({
+      question,
+      answer,
+      category: category || "General",
+      order: Number(order) || 0,
+      isActive: true,
+    });
+
+    return res.status(201).json({ success: true, message: "FAQ created.", faq });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateFaq = async (req, res) => {
+  try {
+    const updated = await Faq.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!updated) return res.status(404).json({ success: false, message: "FAQ not found." });
+    return res.status(200).json({ success: true, message: "FAQ updated.", faq: updated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteFaq = async (req, res) => {
+  try {
+    await Faq.findByIdAndDelete(req.params.id);
+    return res.status(200).json({ success: true, message: "FAQ deleted." });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getAllUsers,
   updateUserRole,
   toggleUserStatus,
   getAdminDashboardStats,
-};
 
+  // Emergency Requests
+  getAllEmergencyRequestsAdmin,
+  createEmergencyRequest,
+  updateEmergencyRequest,
+  toggleEmergencyRequest,
+  deleteEmergencyRequest,
+
+  // Campaigns
+  getAllCampaignsAdmin,
+  createCampaign,
+  updateCampaign,
+  deleteCampaign,
+
+  // Articles
+  getAllArticlesAdmin,
+  createArticle,
+  updateArticle,
+  deleteArticle,
+
+  // Inquiries
+  getAllInquiries,
+  deleteInquiry,
+
+  // Donations
+  getAllDonationsAdmin,
+  deleteDonationAdmin,
+
+  // FAQs
+  getAllFaqsAdmin,
+  createFaq,
+  updateFaq,
+  deleteFaq,
+};
