@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const User = require("../models/User");
 const Donate = require("../models/donate");
 const Contact = require("../models/contact");
@@ -6,6 +7,12 @@ const Campaign = require("../models/Campaign");
 const Article = require("../models/Article");
 const Faq = require("../models/Faq");
 const Testimonial = require("../models/Testimonial");
+
+// Helper: Validate MongoDB ObjectId
+const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
+
+// Helper: Escape Regex Special Characters
+const escapeRegex = (string) => (string || "").replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
 
 /**
  * Get all users with search, role filter, and pagination
@@ -20,8 +27,8 @@ const getAllUsers = async (req, res) => {
       query.role = role;
     }
 
-    if (search.trim()) {
-      const searchRegex = new RegExp(search.trim(), "i");
+    if (search && search.trim()) {
+      const searchRegex = new RegExp(escapeRegex(search.trim()), "i");
       query.$or = [
         { name: searchRegex },
         { mail: searchRegex },
@@ -31,8 +38,8 @@ const getAllUsers = async (req, res) => {
       ];
     }
 
-    const pageNumber = Math.max(1, parseInt(page, 10));
-    const pageSize = Math.max(1, Math.min(100, parseInt(limit, 10)));
+    const pageNumber = Math.max(1, parseInt(page, 10) || 1);
+    const pageSize = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
     const skip = (pageNumber - 1) * pageSize;
 
     const [users, total] = await Promise.all([
@@ -50,7 +57,7 @@ const getAllUsers = async (req, res) => {
         total,
         page: pageNumber,
         limit: pageSize,
-        totalPages: Math.ceil(total / pageSize),
+        totalPages: Math.ceil(total / pageSize) || 1,
       },
     });
   } catch (error) {
@@ -70,6 +77,10 @@ const updateUserRole = async (req, res) => {
   try {
     const { id } = req.params;
     const { role } = req.body;
+
+    if (!isValidId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid user identifier format." });
+    }
 
     if (!["user", "donor", "admin"].includes(role)) {
       return res.status(400).json({
@@ -118,6 +129,10 @@ const toggleUserStatus = async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (!isValidId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid user identifier format." });
+    }
+
     const targetUser = await User.findById(id);
     if (!targetUser) {
       return res.status(404).json({ success: false, message: "User not found." });
@@ -126,7 +141,7 @@ const toggleUserStatus = async (req, res) => {
     if (targetUser._id.equals(req.userId)) {
       return res.status(400).json({
         success: false,
-        message: "You cannot deactivate your own account.",
+        message: "You cannot deactivate your own administrator account.",
       });
     }
 
@@ -232,14 +247,16 @@ const createEmergencyRequest = async (req, res) => {
       return res.status(400).json({ success: false, message: "Hospital, location, blood, and patient are required." });
     }
 
+    const units = Math.max(1, parseInt(unitsRequired, 10) || 1);
+
     const newRequest = await EmergencyRequest.create({
-      hospital,
-      location,
-      blood,
-      patient,
+      hospital: String(hospital).trim(),
+      location: String(location).trim(),
+      blood: String(blood).trim().toUpperCase(),
+      patient: String(patient).trim(),
       urgency: urgency || "Immediate",
-      unitsRequired: Number(unitsRequired) || 1,
-      contactPhone: contactPhone || "+91 985-452-964",
+      unitsRequired: units,
+      contactPhone: contactPhone ? String(contactPhone).trim() : "+91 985-452-964",
       isActive: true,
     });
 
@@ -251,6 +268,10 @@ const createEmergencyRequest = async (req, res) => {
 
 const updateEmergencyRequest = async (req, res) => {
   try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid request identifier format." });
+    }
+
     const updated = await EmergencyRequest.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updated) return res.status(404).json({ success: false, message: "Request not found." });
     return res.status(200).json({ success: true, message: "Emergency request updated.", request: updated });
@@ -261,6 +282,10 @@ const updateEmergencyRequest = async (req, res) => {
 
 const toggleEmergencyRequest = async (req, res) => {
   try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid request identifier format." });
+    }
+
     const reqDoc = await EmergencyRequest.findById(req.params.id);
     if (!reqDoc) return res.status(404).json({ success: false, message: "Request not found." });
     reqDoc.isActive = !reqDoc.isActive;
@@ -273,7 +298,12 @@ const toggleEmergencyRequest = async (req, res) => {
 
 const deleteEmergencyRequest = async (req, res) => {
   try {
-    await EmergencyRequest.findByIdAndDelete(req.params.id);
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid request identifier format." });
+    }
+
+    const deleted = await EmergencyRequest.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, message: "Request not found." });
     return res.status(200).json({ success: true, message: "Emergency request deleted." });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -300,14 +330,19 @@ const createCampaign = async (req, res) => {
       return res.status(400).json({ success: false, message: "Title, focus, goal, and description are required." });
     }
 
+    const numericGoal = Number(goal);
+    if (isNaN(numericGoal) || numericGoal <= 0) {
+      return res.status(400).json({ success: false, message: "Goal must be a positive number." });
+    }
+
     const campaign = await Campaign.create({
-      title,
-      focus,
-      image: image || "https://images.unsplash.com/photo-1579684385127-1ef15d508118?q=80&w=800&auto=format&fit=crop",
-      goal: Number(goal),
-      raised: Number(raised) || 0,
-      beneficiaries: beneficiaries || "",
-      desc,
+      title: String(title).trim(),
+      focus: String(focus).trim(),
+      image: image ? String(image).trim() : "https://images.unsplash.com/photo-1579684385127-1ef15d508118?q=80&w=800&auto=format&fit=crop",
+      goal: numericGoal,
+      raised: Math.max(0, Number(raised) || 0),
+      beneficiaries: beneficiaries ? String(beneficiaries).trim() : "",
+      desc: String(desc).trim(),
       isActive: true,
     });
 
@@ -319,6 +354,10 @@ const createCampaign = async (req, res) => {
 
 const updateCampaign = async (req, res) => {
   try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid campaign identifier format." });
+    }
+
     const updated = await Campaign.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updated) return res.status(404).json({ success: false, message: "Campaign not found." });
     return res.status(200).json({ success: true, message: "Campaign updated.", campaign: updated });
@@ -329,7 +368,12 @@ const updateCampaign = async (req, res) => {
 
 const deleteCampaign = async (req, res) => {
   try {
-    await Campaign.findByIdAndDelete(req.params.id);
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid campaign identifier format." });
+    }
+
+    const deleted = await Campaign.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, message: "Campaign not found." });
     return res.status(200).json({ success: true, message: "Campaign deleted." });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -357,13 +401,13 @@ const createArticle = async (req, res) => {
     }
 
     const article = await Article.create({
-      title,
-      category,
-      readTime: readTime || "4 min read",
+      title: String(title).trim(),
+      category: String(category).trim(),
+      readTime: readTime ? String(readTime).trim() : "4 min read",
       date: date || new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-      image: image || "https://images.unsplash.com/photo-1516549655169-df83a0774514?q=80&w=800&auto=format&fit=crop",
-      excerpt,
-      content: content || "",
+      image: image ? String(image).trim() : "https://images.unsplash.com/photo-1516549655169-df83a0774514?q=80&w=800&auto=format&fit=crop",
+      excerpt: String(excerpt).trim(),
+      content: content ? String(content).trim() : "",
       link: link || "/blog/blood",
       isPublished: true,
     });
@@ -376,6 +420,10 @@ const createArticle = async (req, res) => {
 
 const updateArticle = async (req, res) => {
   try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid article identifier format." });
+    }
+
     const updated = await Article.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updated) return res.status(404).json({ success: false, message: "Article not found." });
     return res.status(200).json({ success: true, message: "Article updated.", article: updated });
@@ -386,7 +434,12 @@ const updateArticle = async (req, res) => {
 
 const deleteArticle = async (req, res) => {
   try {
-    await Article.findByIdAndDelete(req.params.id);
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid article identifier format." });
+    }
+
+    const deleted = await Article.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, message: "Article not found." });
     return res.status(200).json({ success: true, message: "Article deleted." });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -408,7 +461,12 @@ const getAllInquiries = async (req, res) => {
 
 const deleteInquiry = async (req, res) => {
   try {
-    await Contact.findByIdAndDelete(req.params.id);
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid inquiry identifier format." });
+    }
+
+    const deleted = await Contact.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, message: "Inquiry not found." });
     return res.status(200).json({ success: true, message: "Inquiry removed." });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -430,7 +488,12 @@ const getAllDonationsAdmin = async (req, res) => {
 
 const deleteDonationAdmin = async (req, res) => {
   try {
-    await Donate.findByIdAndDelete(req.params.id);
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid donation identifier format." });
+    }
+
+    const deleted = await Donate.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, message: "Donation record not found." });
     return res.status(200).json({ success: true, message: "Donation record deleted." });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -458,9 +521,9 @@ const createFaq = async (req, res) => {
     }
 
     const faq = await Faq.create({
-      question,
-      answer,
-      category: category || "General",
+      question: String(question).trim(),
+      answer: String(answer).trim(),
+      category: category ? String(category).trim() : "General",
       order: Number(order) || 0,
       isActive: true,
     });
@@ -473,6 +536,10 @@ const createFaq = async (req, res) => {
 
 const updateFaq = async (req, res) => {
   try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid FAQ identifier format." });
+    }
+
     const updated = await Faq.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updated) return res.status(404).json({ success: false, message: "FAQ not found." });
     return res.status(200).json({ success: true, message: "FAQ updated.", faq: updated });
@@ -483,7 +550,12 @@ const updateFaq = async (req, res) => {
 
 const deleteFaq = async (req, res) => {
   try {
-    await Faq.findByIdAndDelete(req.params.id);
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid FAQ identifier format." });
+    }
+
+    const deleted = await Faq.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, message: "FAQ not found." });
     return res.status(200).json({ success: true, message: "FAQ deleted." });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

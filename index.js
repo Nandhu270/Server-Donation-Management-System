@@ -76,37 +76,98 @@ app.get("/login", (req, res) => {
 // Legacy GET /search -> Delegate to secure donor search (sanitized fields only)
 app.get("/search", donorController.searchDonors);
 
-// POST /donate -> Handle donation creation
+// POST /donate -> Handle donation creation with senior-level validation
 app.post("/donate", async (req, res) => {
   try {
-    const donation = await donate.create(req.body);
+    const { amount, currency, mail, name, blood, mobile, pincode, paytype, address, country, birth, gender } = req.body;
+
+    if (!amount || Number(amount) <= 0 || isNaN(Number(amount))) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid positive contribution amount is required.",
+      });
+    }
+
+    if (!mail || !name || !blood || !mobile) {
+      return res.status(400).json({
+        success: false,
+        message: "Donor name, email address, blood group, and mobile number are required.",
+      });
+    }
+
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(String(mail).trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address.",
+      });
+    }
+
+    const donation = await donate.create({
+      currency: currency || "INR",
+      amount: Number(amount),
+      paytype: paytype || "UPI",
+      mail: String(mail).trim().toLowerCase(),
+      name: String(name).trim(),
+      blood: String(blood).trim().toUpperCase(),
+      mobile: Number(mobile),
+      birth: birth || "Not specified",
+      gender: gender || "Not specified",
+      address: address ? String(address).trim() : "Not specified",
+      country: country ? String(country).trim() : "India",
+      pincode: Number(pincode) || 0,
+      userId: req.body.userId || undefined,
+    });
+
     res.status(201).json({
       success: true,
-      message: "Donation saved successfully!",
+      message: "Donation record saved successfully!",
       donation,
     });
   } catch (err) {
     res.status(400).json({
       success: false,
-      message: "Error saving donation",
+      message: "Error saving donation record.",
       error: err.message,
     });
   }
 });
 
-// POST /contactus -> Save contact query
+// POST /contactus -> Save contact query with validation
 app.post("/contactus", async (req, res) => {
   try {
-    const contactus = await contact.create(req.body);
+    const { name, mail, subject, msg } = req.body;
+    if (!name || !mail || !subject || !msg) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields (name, email, subject, message) are required.",
+      });
+    }
+
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(String(mail).trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid email address.",
+      });
+    }
+
+    const contactus = await contact.create({
+      name: String(name).trim(),
+      mail: String(mail).trim().toLowerCase(),
+      subject: String(subject).trim(),
+      msg: String(msg).trim(),
+    });
+
     res.status(201).json({
       success: true,
-      message: "ContactUs saved successfully!",
+      message: "Contact inquiry saved successfully!",
       contactus,
     });
   } catch (err) {
     res.status(400).json({
       success: false,
-      message: "Error saving contactus",
+      message: "Error saving inquiry.",
       error: err.message,
     });
   }
