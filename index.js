@@ -12,7 +12,7 @@ connectDB().then(() => {
   seedDatabase();
 });
 
-const PORT = process.env.PORT || 5174;
+const PORT = process.env.PORT || 10000;
 
 // Models
 const User = require("./models/User");
@@ -200,6 +200,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server is running securely on PORT ${PORT}`);
 });
